@@ -219,7 +219,9 @@ def create_exchange_factory(
     if exchange_type == 'local':
         return LocalExchangeFactory()
 
-    # TODO: How is globus authentication handled in HPC settings?
+    # NOTE: If using the cloud exchange, run the authentication prior to
+    # submitting a batch job script. This will cache a Globus auth session
+    # token on the machine that will be reused.
 
     # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
     # This makes all agents talk to each other through the cloud, which
