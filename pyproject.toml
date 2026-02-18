@@ -88,6 +88,9 @@ warn_redundant_casts = true
 warn_unused_configs = true
 warn_unused_ignores = true
 
+[tools.mypy]
+plugins = ["academy.mypy_plugin"]
+
 [[tool.mypy.overrides]]
 module = "testing.*"
 allow_incomplete_defs = true

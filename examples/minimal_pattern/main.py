@@ -9,10 +9,12 @@ from concurrent.futures import ThreadPoolExecutor
 from academy.agent import action
 from academy.agent import Agent
 from academy.agent import loop
-from academy.exchange import LocalExchangeFactory
+from academy.exchange.cloud.client import HttpExchangeFactory
 from academy.handle import Handle
 from academy.logging import init_logging
 from academy.manager import Manager
+
+EXCHANGE_ADDRESS = 'https://exchange.academy-agents.org'
 
 
 class SimulationAgent(Agent):
@@ -187,8 +189,16 @@ async def main() -> None:
     """Run the main function."""
     init_logging('INFO')
 
+    # TODO: How does globus auth work if launching in an HPC setting?
+
     async with await Manager.from_exchange_factory(
-        factory=LocalExchangeFactory(),
+        # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
+        # This makes all agents talk to each other through the cloud, which
+        # allows them to run on different machines with easier setup.
+        factory=HttpExchangeFactory(
+            EXCHANGE_ADDRESS,
+            auth_method='globus',
+        ),
         executors=ThreadPoolExecutor(),
     ) as manager:
         inference_handle = await manager.launch(InferenceAgent)
