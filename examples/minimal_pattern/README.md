@@ -6,6 +6,7 @@ It uses placeholder agents to demonstrate the simulation-training-inference data
 
 Run the example:
 ```bash
+pip install academy-py
 python main.py
 ```
 
