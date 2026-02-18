@@ -160,7 +160,7 @@ quote-style = "single"
 
 [tool.ruff.isort]
 force-single-line = true
-known-first-party = ["deepdrivewe", "test", "testing"]
+known-first-party = ["deepdrivewe", "test", "testing", "examples"]
 order-by-type = false
 required-imports = ["from __future__ import annotations"]
 
