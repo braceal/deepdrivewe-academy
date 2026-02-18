@@ -222,10 +222,7 @@ def create_exchange_factory(
     # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
     # This makes all agents talk to each other through the cloud, which
     # allows them to run on different machines with easier setup.
-    return HttpExchangeFactory(
-        url=EXCHANGE_ADDRESS,
-        auth_method='globus',
-    )
+    return HttpExchangeFactory(url=EXCHANGE_ADDRESS, auth_method='globus')
 
 
 async def main() -> None:
