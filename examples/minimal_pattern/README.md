@@ -4,10 +4,15 @@ A minimal example of the DeepDriveWE pattern.
 
 It uses placeholder agents to demonstrate the simulation-training-inference data flow without requiring any MD simulation, deep learning, etc dependencies.
 
-Run the example:
+Run the example locally (no authentication required):
 ```bash
 pip install academy-py
 python main.py
+```
+
+Or run via the Academy Exchange Cloud (requires Globus authentication):
+```bash
+python main.py --exchange globus
 ```
 
 This launches three agents that communicate asynchronously:

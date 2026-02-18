@@ -1,7 +1,19 @@
-"""Minimal example of using Academy to implement DeepDriveWE pattern."""
+"""Minimal example of using Academy to implement DeepDriveWE pattern.
+
+Usage
+-----
+Run locally (default, no authentication required)::
+
+    python examples/minimal_pattern/main.py
+
+Run via the Academy Exchange Cloud (requires Globus authentication)::
+
+    python examples/minimal_pattern/main.py --exchange globus
+"""
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +22,7 @@ from academy.agent import action
 from academy.agent import Agent
 from academy.agent import loop
 from academy.exchange.cloud.client import HttpExchangeFactory
+from academy.exchange.local import LocalExchangeFactory
 from academy.handle import Handle
 from academy.logging import init_logging
 from academy.manager import Manager
@@ -185,20 +198,43 @@ class InferenceAgent(Agent):
             self.__queue.task_done()
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Minimal DeepDriveWE pattern example.',
+    )
+    parser.add_argument(
+        '--exchange',
+        choices=['local', 'globus'],
+        default='local',
+        help='Exchange type (default: local).',
+    )
+    return parser.parse_args()
+
+
+def create_exchange_factory(
+    exchange_type: str,
+) -> LocalExchangeFactory | HttpExchangeFactory:
+    """Create the exchange factory based on the factory type."""
+    if exchange_type == 'local':
+        return LocalExchangeFactory()
+
+    # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
+    # This makes all agents talk to each other through the cloud, which
+    # allows them to run on different machines with easier setup.
+    return HttpExchangeFactory(
+        url=EXCHANGE_ADDRESS,
+        auth_method='globus',
+    )
+
+
 async def main() -> None:
     """Run the main function."""
+    args = parse_args()
     init_logging('INFO')
 
-    # TODO: How does globus auth work if launching in an HPC setting?
-
     async with await Manager.from_exchange_factory(
-        # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
-        # This makes all agents talk to each other through the cloud, which
-        # allows them to run on different machines with easier setup.
-        factory=HttpExchangeFactory(
-            url=EXCHANGE_ADDRESS,
-            auth_method='globus',
-        ),
+        factory=create_exchange_factory(args.exchange),
         executors=ThreadPoolExecutor(),
     ) as manager:
         inference_handle = await manager.launch(InferenceAgent)
