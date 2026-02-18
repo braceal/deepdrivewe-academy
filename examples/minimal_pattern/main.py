@@ -219,6 +219,8 @@ def create_exchange_factory(
     if exchange_type == 'local':
         return LocalExchangeFactory()
 
+    # TODO: How is globus authentication handled in HPC settings?
+
     # Use the HttpExchangeFactory to connect to the Academy Exchange Cloud.
     # This makes all agents talk to each other through the cloud, which
     # allows them to run on different machines with easier setup.
