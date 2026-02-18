@@ -196,7 +196,7 @@ async def main() -> None:
         # This makes all agents talk to each other through the cloud, which
         # allows them to run on different machines with easier setup.
         factory=HttpExchangeFactory(
-            EXCHANGE_ADDRESS,
+            url=EXCHANGE_ADDRESS,
             auth_method='globus',
         ),
         executors=ThreadPoolExecutor(),
