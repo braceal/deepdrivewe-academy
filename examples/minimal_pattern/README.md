@@ -15,6 +15,8 @@ Or run via the Academy Exchange Cloud (requires Globus authentication):
 python main.py --exchange globus
 ```
 
+> **Note:** If using the cloud exchange, run the authentication prior to submitting a batch job script. This will cache a Globus auth session token on the machine that will be reused.
+
 This launches three agents that communicate asynchronously:
 
 ```mermaid
