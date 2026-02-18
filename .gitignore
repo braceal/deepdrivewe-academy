@@ -2,12 +2,6 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=sublimetext,pycharm,visualstudiocode,macos,python,jupyternotebooks
 
 
-# Datasets
-data/radicalsam/*
-data/pfam/*
-data/uniprot/*
-
-
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
