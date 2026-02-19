@@ -26,6 +26,8 @@ from academy.exchange.local import LocalExchangeFactory
 from academy.handle import Handle
 from academy.logging import init_logging
 from academy.manager import Manager
+from pydantic import BaseModel
+from pydantic import Field
 
 EXCHANGE_ADDRESS = 'https://exchange.academy-agents.org'
 
@@ -126,6 +128,13 @@ class InferenceAgent(Agent):
     # A logger for logging exceptions in background tasks.
     __logger: logging.Logger
 
+    def __init__(
+        self,
+        simulation_handles: list[Handle[SimulationAgent]],
+    ) -> None:
+        super().__init__()
+        self.simulation_handles = simulation_handles
+
     async def agent_on_startup(self) -> None:
         """Startup."""
         self.__logger = logging.getLogger(__class__.__name__)  # type: ignore[name-defined]
@@ -192,6 +201,10 @@ class InferenceAgent(Agent):
                 )
                 self.inference_result += 1
 
+            # Send the inference results to the simulation agents
+            for simulation_handle in self.simulation_handles:
+                await simulation_handle.simulate(self.inference_result)
+
             # Update the iteration to signal that inference has been completed
             # on the current data.
             self.iteration += 1
@@ -229,38 +242,123 @@ def create_exchange_factory(
     return HttpExchangeFactory(url=EXCHANGE_ADDRESS, auth_method='globus')
 
 
+class DeepDriveWeConfig(BaseModel):
+    """Configuration for DeepDriveWE pattern."""
+
+    iterations: int = Field(
+        default=2,
+        description='Number of iterations to run the pattern for.',
+    )
+
+    num_simulations: int = Field(
+        default=2,
+        description='Number of simulation agents to launch.',
+    )
+
+
 async def main() -> None:
     """Run the main function."""
     args = parse_args()
     init_logging('INFO')
 
+    # Load the configuration
+    config = DeepDriveWeConfig()
+
     async with await Manager.from_exchange_factory(
         factory=create_exchange_factory(args.exchange),
         executors=ThreadPoolExecutor(),
     ) as manager:
-        inference_handle = await manager.launch(InferenceAgent)
+        # Register the agents with the manager (this will create the
+        # mailboxes for the agents).
+        reg_inference_agent = await manager.register_agent(InferenceAgent)
+        reg_training_agent = await manager.register_agent(TrainingAgent)
+        reg_simulation_agents = await asyncio.gather(
+            *[
+                manager.register_agent(SimulationAgent)
+                for _ in range(config.num_simulations)
+            ],
+        )
+
+        print('num simulation agents registered:', len(reg_simulation_agents))
+
+        # Get the handle of each agent from the manager.
+        inference_handle = manager.get_handle(reg_inference_agent)
+        training_handle = manager.get_handle(reg_training_agent)
+        simulation_handles = [
+            manager.get_handle(reg_simulation_agent)
+            for reg_simulation_agent in reg_simulation_agents
+        ]
+
+        print('num simulation handles:', len(simulation_handles))
+
+        # Launch the agents (this will start the agent_on_startup method of
+        # each agent).
+        inference_handle = await manager.launch(
+            InferenceAgent,
+            registration=reg_inference_agent,
+            args=(simulation_handles,),
+        )
+
         training_handle = await manager.launch(
             TrainingAgent,
+            registration=reg_training_agent,
             args=(inference_handle,),
         )
-        simulation_handle = await manager.launch(
-            SimulationAgent,
-            args=(training_handle, inference_handle),
+
+        # simulation_agents = [
+        #     await manager.launch(
+        #         SimulationAgent,
+        #         args=(training_handle, inference_handle),
+        #     )
+        #     for _ in range(config.num_simulations)
+        # ]
+
+        simulation_agents = await asyncio.gather(
+            *[
+                manager.launch(
+                    SimulationAgent,
+                    registration=reg_simulation_agent,
+                    args=(training_handle, inference_handle),
+                )
+                for reg_simulation_agent in reg_simulation_agents
+            ],
         )
 
-        # Run 2 iterations of the DeepDriveWE pattern.
-        for iteration in range(1, 3):
-            # Run the first simulation
-            await simulation_handle.simulate(iteration)
+        # Kick off the first iteration of simulations
+        await asyncio.gather(
+            *[agent.simulate(1) for agent in simulation_agents],
+        )
 
-            # TODO: Can we do better than spin waiting here?
-            # Wait for the inference agent to finish an iteration
-            while await inference_handle.get_iteration() < iteration:
-                await asyncio.sleep(0.1)
+        # Wait until the inference agent is done
+        while await inference_handle.get_iteration() < config.iterations:
+            await asyncio.sleep(0.1)
 
-            # Get the inference result from the inference agent.
-            inference_result = await inference_handle.get_inference_result()
-            logging.info(f'Received inference result: {inference_result}')
+        # Shutdown the agents (this will also shutdown the manager and
+        # exchange).
+        await asyncio.gather(
+            *[
+                manager.shutdown(handle, blocking=True)
+                for handle in [inference_handle, training_handle]
+            ],
+        )
+
+        # # Run 2 iterations of the DeepDriveWE pattern.
+        # for iteration in range(1, 3):
+        #     # Run the first simulation
+        #     # await simulation_handle.simulate(iteration)
+
+        #     await asyncio.gather(
+        #         *[agent.simulate(iteration) for agent in simulation_agents],
+        #     )
+
+        #     # TODO: Can we do better than spin waiting here?
+        #     # Wait for the inference agent to finish an iteration
+        #     while await inference_handle.get_iteration() < iteration:
+        #         await asyncio.sleep(0.1)
+
+        #     # Get the inference result from the inference agent.
+        #     inference_result = await inference_handle.get_inference_result()
+        #     logging.info(f'Received inference result: {inference_result}')
 
 
 if __name__ == '__main__':
