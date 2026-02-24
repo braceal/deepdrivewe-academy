@@ -15,27 +15,28 @@ Or run via the Academy Exchange Cloud (requires Globus authentication):
 python main.py --exchange globus
 ```
 
-This launches three agents that communicate asynchronously:
+> **Note:** If using the cloud exchange, run the authentication prior to submitting a batch job script. This will cache a Globus auth session token on the machine that will be reused.
+
+This launches three agent types that communicate asynchronously via `SimResult` and `SimMetadata` objects:
 
 ```mermaid
 graph LR
-    M["main()"] -->|launch| SA[SimulationAgent]
+    M["main()"] -->|"launch + initial SimMetadata"| SA["SimulationAgent(s)"]
     M -->|launch| TA[TrainingAgent]
     M -->|launch| IA[InferenceAgent]
 
-    SA -->|simulation data| TA
-    SA -->|simulation data| IA
+    SA -->|SimResult| TA
+    SA -->|SimResult| IA
     TA -->|model weights| IA
+    IA -->|"SimMetadata (next iter)"| SA
 
-    M -->|get_iteration| IA
-    M -->|get_inference_result| IA
+    M -->|"wait()"| IA
 ```
 
-**SimulationAgent** runs a simulation and sends the results to both the
-TrainingAgent and InferenceAgent.
+**SimulationAgent** receives `SimMetadata`, runs a (mock) simulation, and sends the `SimResult` to both the TrainingAgent and InferenceAgent.
 
-**TrainingAgent** trains on the simulation data and sends updated model weights to the InferenceAgent.
+**TrainingAgent** trains on each `SimResult` as it arrives (streaming) and sends updated model weights to the InferenceAgent.
 
-**InferenceAgent** runs inference using the latest model weights.
+**InferenceAgent** collects `SimResult`s from all simulations in a batch. Once the full batch is received, it runs inference and kicks off the next iteration by sending new `SimMetadata` to each SimulationAgent. After reaching `max_iterations`, it shuts itself down.
 
-**The main loop** polls the InferenceAgent for completion before starting the next iteration.
+**main()** launches all agents, sends the initial `SimMetadata` to start iteration 1, then calls `manager.wait()` until the InferenceAgent signals completion.
