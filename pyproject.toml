@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepdrivewe"
-version = "2026.02.18"
+version = "2026.02.24"
 authors = [
     {name = "Alexander Brace", email = "abrace@anl.gov"},
     {name = "Nicolas Frazee", email = "ncf26@pitt.edu"},
