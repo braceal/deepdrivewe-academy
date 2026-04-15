@@ -106,7 +106,9 @@ async def main() -> None:
     # can guarantee cleanup even if the process is interrupted.
     gpu_executor = ParslPoolExecutor(parsl_config)
 
-    # Safety net: atexit fires on normal exit and unhandled exceptions.
+    # On SIGTERM, atexit shuts down Parsl workers but the main
+    # process hangs during interpreter cleanup. Follow up with
+    # kill -9 to force-kill the main process (see README).
     atexit.register(gpu_executor.shutdown, wait=False)
 
     try:
