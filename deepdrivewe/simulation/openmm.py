@@ -27,8 +27,6 @@ from pydantic import Field
 from pydantic import model_validator
 
 from deepdrivewe.utils import retry_on_exception
-from deepdrivewe.workflows.stream import ProxyStreamConfig
-from deepdrivewe.workflows.stream import SIMULATION_TOPIC
 
 try:
     import openmm
@@ -365,7 +363,6 @@ class CollectionReporter(OpenMMReporter):
         report_interval: int,
         collectors: list[Collector],
         openmm_selection: Sequence[str] = ('CA',),
-        stream_config: ProxyStreamConfig | None = None,
     ) -> None:
         """Initialize the reporter.
 
@@ -392,13 +389,6 @@ class CollectionReporter(OpenMMReporter):
 
         self.collectors = collectors
 
-        # Initialize the streaming producer
-        self.producer = None
-        if stream_config is not None:
-            self.producer = stream_config.get_producer(
-                topic=SIMULATION_TOPIC,
-            )
-
     def get_collected_data(self) -> dict[str, np.ndarray]:
         """Get the collected data from the simulation.
 
@@ -423,11 +413,8 @@ class CollectionReporter(OpenMMReporter):
         positions = self.get_positions(simulation, state)
 
         # Collect data from the simulation
-        data = {x.topic: x.collect(positions) for x in self.collectors}
-
-        # Stream the data if a stream config is provided
-        if self.producer is not None:
-            self.producer.send(topic=SIMULATION_TOPIC, obj=data, evict=True)
+        for collector in self.collectors:
+            collector.collect(positions)
 
 
 class OpenMMConfig(BaseModel):
