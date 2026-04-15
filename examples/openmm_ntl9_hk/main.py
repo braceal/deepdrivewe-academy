@@ -106,6 +106,10 @@ async def main() -> None:
     # can guarantee cleanup even if the process is interrupted.
     gpu_executor = ParslPoolExecutor(parsl_config)
 
+    # Handle `kill <pid>` (SIGTERM). Parsl workers survive the main
+    # process dying, and normal interpreter shutdown hangs after
+    # atexit cleans up the DFK. Using os._exit() after shutdown
+    # sidesteps the hang while still tearing down workers cleanly.
     def _handle_sigterm(*_: object) -> None:
         gpu_executor.shutdown(wait=False)
         os._exit(0)
