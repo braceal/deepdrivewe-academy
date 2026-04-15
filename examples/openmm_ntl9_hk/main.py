@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import atexit
 import logging
 import os
+import signal
 from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -106,10 +106,15 @@ async def main() -> None:
     # can guarantee cleanup even if the process is interrupted.
     gpu_executor = ParslPoolExecutor(parsl_config)
 
-    # On SIGTERM, atexit shuts down Parsl workers but the main
-    # process hangs during interpreter cleanup. Follow up with
-    # kill -9 to force-kill the main process (see README).
-    atexit.register(gpu_executor.shutdown, wait=False)
+    # Handle `kill <pid>` (SIGTERM). Parsl workers survive the main
+    # process dying, and normal interpreter shutdown hangs after
+    # atexit cleans up the DFK. Using os._exit() after shutdown
+    # sidesteps the hang while still tearing down workers cleanly.
+    def _handle_sigterm(*_: object) -> None:
+        gpu_executor.shutdown(wait=False)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
         async with await Manager.from_exchange_factory(
