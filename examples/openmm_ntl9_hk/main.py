@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from academy.exchange.cloud.client import HttpExchangeFactory
@@ -102,7 +103,11 @@ async def main() -> None:
 
     async with await Manager.from_exchange_factory(
         factory=create_exchange_factory(args.exchange),
-        executors=ParslPoolExecutor(parsl_config),
+        executors={
+            'gpu': ParslPoolExecutor(parsl_config),
+            'cpu': ThreadPoolExecutor(max_workers=1),
+        },
+        default_executor='gpu',
     ) as manager:
         await run_westpa_workflow(
             manager=manager,
@@ -118,6 +123,9 @@ async def main() -> None:
             westpa_agent_kwargs={
                 'inference_config': cfg.inference_config,
             },
+            sim_executor='gpu',
+            westpa_executor='cpu',
+            logfile=cfg.output_dir / 'runtime.log',
         )
 
 

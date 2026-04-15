@@ -163,8 +163,9 @@ class OpenMMSimAgent(SimulationAgent):
         westpa_handle: Handle[WestpaAgent],
         sim_config: SimulationConfig,
         output_dir: Path,
+        logfile: Path | None = None,
     ) -> None:
-        super().__init__(westpa_handle)
+        super().__init__(westpa_handle, logfile=logfile)
         self.sim_config = sim_config
         self.output_dir = output_dir
 
@@ -223,12 +224,14 @@ class HuberKimWestpaAgent(WestpaAgent):
         ensemble: WeightedEnsemble,
         checkpointer: EnsembleCheckpointer | None = None,
         inference_config: InferenceConfig | None = None,
+        logfile: Path | None = None,
     ) -> None:
         super().__init__(
             simulation_handles=simulation_handles,
             max_iterations=max_iterations,
             ensemble=ensemble,
             checkpointer=checkpointer,
+            logfile=logfile,
         )
         self.inference_config = inference_config or InferenceConfig()
 
