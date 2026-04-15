@@ -43,12 +43,14 @@ import asyncio
 import logging
 from abc import ABC
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any
 
 from academy.agent import action
 from academy.agent import Agent
 from academy.agent import loop
 from academy.handle import Handle
+from academy.logging import init_logging
 from academy.manager import Manager
 
 from deepdrivewe.api import BasisStates
@@ -58,6 +60,20 @@ from deepdrivewe.api import SimResult
 from deepdrivewe.api import TargetState
 from deepdrivewe.api import WeightedEnsemble
 from deepdrivewe.checkpoint import EnsembleCheckpointer
+from deepdrivewe.utils import wait_for_file
+
+
+async def dispatch_round_robin(
+    handles: list[Handle[SimulationAgent]],
+    sims: list[SimMetadata],
+) -> None:
+    """Dispatch simulations to agents round-robin."""
+    await asyncio.gather(
+        *[
+            handles[i % len(handles)].simulate(sim)
+            for i, sim in enumerate(sims)
+        ],
+    )
 
 
 class SimulationAgent(Agent, ABC):
@@ -80,9 +96,14 @@ class SimulationAgent(Agent, ABC):
     westpa_handle: Handle[WestpaAgent]
     logger: logging.Logger
 
-    def __init__(self, westpa_handle: Handle[WestpaAgent]) -> None:
+    def __init__(
+        self,
+        westpa_handle: Handle[WestpaAgent],
+        logfile: Path | None = None,
+    ) -> None:
         super().__init__()
         self.westpa_handle = westpa_handle
+        self.logfile = logfile
 
     async def agent_on_startup(self) -> None:
         """Initialize the agent.
@@ -91,6 +112,8 @@ class SimulationAgent(Agent, ABC):
         model). Always call ``await super().agent_on_startup()``
         first.
         """
+        if self.logfile is not None:
+            init_logging('INFO', logfile=self.logfile)
         self.logger = logging.getLogger(type(self).__name__)
         self.logger.info('started')
 
@@ -125,6 +148,12 @@ class SimulationAgent(Agent, ABC):
             f'iteration {sim_metadata.iteration_id}',
         )
 
+        # Wait for the restart file to be available before running the
+        # simulation. Handles NFS caching issues where the file may not be
+        # immediately visible
+        await wait_for_file(sim_metadata.parent_restart_file, self.logger)
+
+        # Run the simulation in a thread to avoid blocking the event loop
         result = await self.agent_run_sync(self.run_simulation, sim_metadata)
 
         self.logger.info(f'sim {sim_metadata.simulation_id} complete')
@@ -172,12 +201,14 @@ class WestpaAgent(Agent, ABC):
         max_iterations: int,
         ensemble: WeightedEnsemble,
         checkpointer: EnsembleCheckpointer | None = None,
+        logfile: Path | None = None,
     ) -> None:
         super().__init__()
         self.simulation_handles = simulation_handles
         self.max_iterations = max_iterations
         self.ensemble = ensemble
         self.checkpointer = checkpointer
+        self.logfile = logfile
 
     @property
     def iteration(self) -> int:
@@ -200,6 +231,8 @@ class WestpaAgent(Agent, ABC):
         Override to add custom startup logic. Always call
         ``await super().agent_on_startup()`` first.
         """
+        if self.logfile is not None:
+            init_logging('INFO', logfile=self.logfile)
         self.logger = logging.getLogger(type(self).__name__)
         self._batch = []
         self._batch_ready = asyncio.Event()
@@ -296,13 +329,7 @@ class WestpaAgent(Agent, ABC):
 
             # Dispatch next iteration round-robin
             self.logger.info(f'dispatching iteration {self.iteration}')
-            n = len(self.simulation_handles)
-            await asyncio.gather(
-                *[
-                    self.simulation_handles[i % n].simulate(sim)
-                    for i, sim in enumerate(next_sims)
-                ],
-            )
+            await dispatch_round_robin(self.simulation_handles, next_sims)
 
 
 async def run_westpa_workflow(  # noqa: PLR0913
@@ -314,6 +341,9 @@ async def run_westpa_workflow(  # noqa: PLR0913
     checkpointer: EnsembleCheckpointer | None = None,
     sim_agent_kwargs: dict[str, Any] | None = None,
     westpa_agent_kwargs: dict[str, Any] | None = None,
+    sim_executor: str | None = None,
+    westpa_executor: str | None = None,
+    logfile: Path | None = None,
 ) -> None:
     """Run a WESTPA workflow with user-defined agent types.
 
@@ -346,6 +376,14 @@ async def run_westpa_workflow(  # noqa: PLR0913
     westpa_agent_kwargs : dict, optional
         Extra keyword arguments for ``WestpaAgent``
         subclass ``__init__`` (e.g., inference config).
+    sim_executor : str, optional
+        Named executor for simulation agents (e.g., GPU).
+    westpa_executor : str, optional
+        Named executor for the WESTPA agent (e.g., CPU).
+    logfile : Path, optional
+        Log file path passed to each agent. Agents call
+        ``init_logging`` in ``agent_on_startup`` so that
+        workers in separate processes get logging configured.
     """
     initial_sims = ensemble.next_sims
     # TODO: Generalize this so we don't have to assume one agent per sim.
@@ -371,8 +409,10 @@ async def run_westpa_workflow(  # noqa: PLR0913
             'max_iterations': max_iterations,
             'ensemble': ensemble,
             'checkpointer': checkpointer,
+            'logfile': logfile,
             **(westpa_agent_kwargs or {}),
         },
+        executor=westpa_executor,
     )
 
     # Launch the SimulationAgents
@@ -382,19 +422,18 @@ async def run_westpa_workflow(  # noqa: PLR0913
                 sim_agent_type,
                 registration=reg,
                 args=(westpa_handle,),
-                kwargs=sim_agent_kwargs,
+                kwargs={
+                    'logfile': logfile,
+                    **(sim_agent_kwargs or {}),
+                },
+                executor=sim_executor,
             )
             for reg in reg_sims
         ],
     )
 
     # Dispatch first iteration round-robin
-    await asyncio.gather(
-        *[
-            sim_agents[i % num_agents].simulate(sim)
-            for i, sim in enumerate(initial_sims)
-        ],
-    )
+    await dispatch_round_robin(sim_agents, initial_sims)
 
     # Wait for the WestpaAgent to finish
     await manager.wait((westpa_handle,))
