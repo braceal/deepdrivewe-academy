@@ -52,9 +52,6 @@ class Recycler(ABC):
         # Get the recycled indices
         recycle_inds = self.recycle(pcoords)
 
-        # Log the recycled indices
-        print(f'{recycle_inds=}', flush=True)
-
         # Create a deep copy of the simulations to prevent modification
         _next_sims = deepcopy(next_sims)
         _cur_sims = deepcopy(cur_sims)
