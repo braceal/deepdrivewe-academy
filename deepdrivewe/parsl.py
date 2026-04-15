@@ -68,7 +68,7 @@ class LocalConfig(BaseComputeConfig):
             strategy=None,
             executors=[
                 HighThroughputExecutor(
-                    address='localhost',
+                    address='127.0.0.1',
                     label=self.label,
                     max_workers_per_node=self.max_workers_per_node,
                     cores_per_worker=self.cores_per_worker,
@@ -92,6 +92,10 @@ class WorkstationConfig(BaseComputeConfig):
         default=(10000, 20000),
         description='Port range for the workers.',
     )
+    address: str = Field(
+        default='127.0.0.1',
+        description='Address for the workers to connect to.',
+    )
     retries: int = Field(
         default=1,
         description='Number of retries for the task.',
@@ -108,7 +112,7 @@ class WorkstationConfig(BaseComputeConfig):
             retries=self.retries,
             executors=[
                 HighThroughputExecutor(
-                    address='localhost',
+                    address=self.address,
                     label=self.label,
                     cpu_affinity='block',
                     available_accelerators=self.available_accelerators,
