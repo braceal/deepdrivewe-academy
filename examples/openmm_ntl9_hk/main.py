@@ -110,10 +110,12 @@ async def main() -> None:
     # Safety net: atexit fires on normal exit and unhandled
     # exceptions; SIGTERM handler covers `kill <pid>`.
     atexit.register(gpu_executor.shutdown, wait=False)
-    signal.signal(
-        signal.SIGTERM,
-        lambda *_: gpu_executor.shutdown(wait=False),
-    )
+
+    def _handle_sigterm(*_: object) -> None:
+        gpu_executor.shutdown(wait=False)
+        raise SystemExit(1)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
         async with await Manager.from_exchange_factory(
