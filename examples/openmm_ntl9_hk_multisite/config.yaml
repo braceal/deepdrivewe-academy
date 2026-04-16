@@ -41,7 +41,12 @@ target_states:
     pcoord: [1.0]
 
 # Huber-Kim resampling parameters.
+# base_dir is the absolute path to this example directory on the
+# inference host. The WESTPA agent chdirs here on startup so relative
+# paths (checkpointer output, logfile, etc.) resolve correctly.
+# Set to null (or omit) for local / single-site runs.
 inference_config:
+  base_dir: /rbstor/abrace/projects/ddwe/src/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite
   sims_per_bin: 4
 
 # --- Simulation-side -------------------------------------------------
@@ -79,4 +84,4 @@ simulation_config:
 # at different hosts that share `output_dir`.
 globus_compute:
   simulation_endpoint_id: a1dfe336-e69d-4d15-a41f-4553fbd9aa05
-  # inference_endpoint_id: 00000000-0000-0000-0000-000000000000
+  # inference_endpoint_id: null

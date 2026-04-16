@@ -8,6 +8,7 @@ dill can resolve them on the worker side.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import MDAnalysis
@@ -91,8 +92,29 @@ class SimulationConfig(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    """Configuration for the resampler."""
+    """Configuration for the resampler.
 
+    Notes
+    -----
+    ``base_dir`` serves the same purpose as
+    ``SimulationConfig.base_dir`` but for the **inference** endpoint.
+    When the WESTPA agent runs on a remote Globus Compute endpoint
+    the worker's cwd is not the example directory, so relative paths
+    (checkpointer output, logfile, etc.) would resolve incorrectly.
+    ``base_dir`` is passed to the agent and used to ``os.chdir``
+    before any path-dependent work begins.
+    """
+
+    base_dir: Path | None = Field(
+        default=None,
+        description=(
+            'Absolute path to the example directory on the '
+            'inference host. The WESTPA agent chdirs here on '
+            'startup so relative paths resolve correctly. '
+            'None keeps the worker cwd unchanged (fine for '
+            'local / single-site runs).'
+        ),
+    )
     sims_per_bin: int = Field(
         default=5,
         description='Number of simulations per bin.',
@@ -315,6 +337,20 @@ class HuberKimWestpaAgent(WestpaAgent):
             logfile=logfile,
         )
         self.inference_config = inference_config or InferenceConfig()
+
+    async def agent_on_startup(self) -> None:
+        """Set the working directory before initializing the agent.
+
+        When running on a remote Globus Compute endpoint the
+        worker's cwd is not the example directory, so relative
+        paths (checkpointer output, logfile, etc.) would resolve
+        incorrectly. Changing to ``base_dir`` first ensures they
+        land in the right place — same rationale as
+        ``SimulationConfig.base_dir`` for the sim agent.
+        """
+        if self.inference_config.base_dir is not None:
+            os.chdir(self.inference_config.base_dir)
+        await super().agent_on_startup()
 
     def run_inference(
         self,
