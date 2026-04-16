@@ -20,10 +20,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from argparse import ArgumentParser
 from collections.abc import MutableMapping
 from concurrent.futures import Executor
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from academy.exchange.cloud.client import HttpExchangeFactory
 from academy.exchange.local import LocalExchangeFactory
@@ -36,6 +38,9 @@ from workflow import OpenMMSimAgent
 from deepdrivewe.api import WeightedEnsemble
 from deepdrivewe.checkpoint import EnsembleCheckpointer
 from deepdrivewe.workflows.westpa import run_westpa_workflow
+
+# --- Configuration ---------------------------------------------------
+
 
 EXCHANGE_ADDRESS = 'https://exchange.academy-agents.org'
 
@@ -90,23 +95,42 @@ def create_executors(
     # Imported lazily so the local smoke test does not require
     # globus-compute-sdk to be installed.
     from globus_compute_sdk import Executor as GCExecutor
+    # from globus_compute_sdk.serialize import AllCodeStrategies
+    # from globus_compute_sdk.serialize import ComputeSerializer
+
+    # AllCodeStrategies inlines class source code during
+    # serialization so the endpoint worker does not need
+    # `workflow.py` on its PYTHONPATH (the default dill strategy
+    # pickles a module reference like `workflow.OpenMMSimAgent`
+    # which fails with ModuleNotFoundError on the remote side).
+    # serializer = ComputeSerializer(strategy_code=AllCodeStrategies())
+
+    sim_executor = GCExecutor(endpoint_id=simulation_endpoint_id)
+    # sim_executor.serializer = serializer
 
     if inference_endpoint_id is None:
         logging.warning(
             'No inference endpoint ID provided; WESTPA agent will run locally',
         )
-        westpa_executor = ThreadPoolExecutor(max_workers=1)
+        westpa_executor: Executor = ThreadPoolExecutor(max_workers=1)
     else:
         westpa_executor = GCExecutor(endpoint_id=inference_endpoint_id)
+        # westpa_executor.serializer = serializer
 
-    return {
-        'sim_executor': GCExecutor(endpoint_id=simulation_endpoint_id),
-        'westpa_executor': westpa_executor,
-    }
+    return {'sim_executor': sim_executor, 'westpa_executor': westpa_executor}
+
+
+def _export_pythonpath() -> None:
+    """Add this directory to PYTHONPATH for Parsl workers."""
+    example_dir = str(Path(__file__).resolve().parent)
+    pythonpath = os.environ.get('PYTHONPATH', '')
+    if example_dir not in pythonpath:
+        os.environ['PYTHONPATH'] = example_dir + os.pathsep + pythonpath
 
 
 async def main() -> None:
     """Run the OpenMM WESTPA workflow across two sites."""
+    _export_pythonpath()
     args = parse_args()
     cfg = ExperimentSettings.from_yaml(args.config)
     cfg.dump_yaml(cfg.output_dir / 'params.yaml')

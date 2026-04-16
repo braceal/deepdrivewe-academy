@@ -21,7 +21,6 @@ from deepdrivewe.api import IterationMetadata
 from deepdrivewe.api import SimMetadata
 from deepdrivewe.api import SimResult
 from deepdrivewe.api import TargetState
-from deepdrivewe.api import validate_and_resolve_file
 from deepdrivewe.api import WeightedEnsemble
 from deepdrivewe.binners import RectilinearBinner
 from deepdrivewe.checkpoint import EnsembleCheckpointer
@@ -42,12 +41,20 @@ class SimulationConfig(BaseModel):
     Notes
     -----
     File paths on this model are *not* resolved at load time. The
-    simulation agent runs on the Globus Compute endpoint host, so paths
-    must remain interpretable on that host. Use absolute paths (that
-    exist on the endpoint) or paths that resolve correctly relative to
-    the endpoint worker's cwd.
+    simulation agent runs on the Globus Compute endpoint host, so
+    relative paths (``reference_file``, ``top_file``, etc.) are
+    resolved at runtime against ``base_dir`` — an absolute path on
+    the sim host. The Parsl worker's Python cwd is NOT the example
+    directory, so all relative paths must go through
+    :meth:`resolve_path`.
     """
 
+    base_dir: Path = Field(
+        description=(
+            'Absolute path to the example directory on the sim host. '
+            'All relative paths in this config are resolved against it.'
+        ),
+    )
     openmm_config: OpenMMConfig = Field(
         description='The configuration for the OpenMM simulation.',
     )
@@ -70,6 +77,15 @@ class SimulationConfig(BaseModel):
         default=['CA'],
         description='OpenMM atom selection strings.',
     )
+
+    def resolve_path(self, path: Path | str | None) -> Path | None:
+        """Resolve a path against ``base_dir`` if relative."""
+        if path is None:
+            return None
+        p = Path(path)
+        if p.is_absolute():
+            return p
+        return self.base_dir / p
 
 
 class InferenceConfig(BaseModel):
@@ -135,7 +151,8 @@ class RMSDBasisStateInitializer(BaseModel):
     @classmethod
     def resolve_file(cls, value: Path | None) -> Path | None:
         """Validate and resolve the file path."""
-        return validate_and_resolve_file(value)
+        return value
+        # return validate_and_resolve_file(value)
 
     def __call__(self, basis_file: str) -> list[float]:
         """Compute RMSD between basis and reference."""
@@ -193,7 +210,7 @@ class ExperimentSettings(BaseModel):
     @classmethod
     def mkdir_validator(cls, value: Path) -> Path:
         """Resolve and create the orchestrator output directory."""
-        value = value.resolve()
+        # value = value.resolve()
         value.mkdir(parents=True, exist_ok=True)
         return value
 
@@ -218,8 +235,15 @@ class OpenMMSimAgent(SimulationAgent):
     def run_simulation(self, metadata: SimMetadata) -> SimResult:
         """Run an OpenMM simulation."""
         metadata.mark_simulation_start()
+        resolve = self.sim_config.resolve_path
 
-        sim_output_dir = self.output_dir / metadata.simulation_name
+        # Resolve all relative paths against the sim-side base_dir.
+        # The Parsl worker's Python cwd is NOT the example directory,
+        # so every path that came from the config or from the
+        # orchestrator (e.g. parent_restart_file) must be resolved.
+        output_dir = resolve(self.output_dir)
+        assert output_dir is not None
+        sim_output_dir = output_dir / metadata.simulation_name
         if sim_output_dir.exists():
             for f in sim_output_dir.iterdir():
                 f.unlink()
@@ -229,14 +253,18 @@ class OpenMMSimAgent(SimulationAgent):
 
         simulation = OpenMMSimulation(
             config=self.sim_config.openmm_config,
-            top_file=self.sim_config.top_file,
+            top_file=resolve(self.sim_config.top_file),
             output_dir=sim_output_dir,
-            checkpoint_file=metadata.parent_restart_file,
+            checkpoint_file=resolve(
+                metadata.parent_restart_file,
+            ),
         )
 
         reporter = ContactMapRMSDReporter(
             report_interval=self.sim_config.openmm_config.report_steps,
-            reference_file=self.sim_config.reference_file,
+            reference_file=(
+                self.sim_config.base_dir / self.sim_config.reference_file
+            ),
             cutoff_angstrom=self.sim_config.cutoff_angstrom,
             mda_selection=self.sim_config.mda_selection,
             openmm_selection=self.sim_config.openmm_selection,

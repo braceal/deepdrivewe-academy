@@ -19,7 +19,7 @@
 output_dir: results/
 
 # Number of WE iterations.
-num_iterations: 100
+num_iterations: 3
 
 # Basis states — read on the orchestrator at init time to seed
 # progress coordinates, AND opened on the sim host as iter-0 restart
@@ -51,7 +51,12 @@ inference_config:
 sim_output_dir: results/simulation/
 
 # OpenMM configuration. reference_file is opened on the endpoint host.
+# base_dir is the absolute path to this example directory on the sim
+# host. All relative paths (reference_file, top_file, restart files
+# from the orchestrator) are resolved against it at runtime — the
+# Parsl worker's Python cwd is NOT the example directory.
 simulation_config:
+  base_dir: /nfs/ml_lab/projects/ml_lab/abrace/projects/ddwe/src/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite
   openmm_config:
     simulation_length_ns: 0.01
     report_interval_ps: 2.0
