@@ -323,7 +323,8 @@ class BasisStates(BaseModel):
             raise NotADirectoryError(
                 f'The basis state directory {value} is not a directory.',
             )
-        return value.resolve()
+        return value
+        # return value.resolve()
 
     @property
     def unique_basis_states(self) -> list[SimMetadata]:
