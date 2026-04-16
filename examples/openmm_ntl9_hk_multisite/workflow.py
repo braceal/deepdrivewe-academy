@@ -25,7 +25,6 @@ from deepdrivewe.api import validate_and_resolve_file
 from deepdrivewe.api import WeightedEnsemble
 from deepdrivewe.binners import RectilinearBinner
 from deepdrivewe.checkpoint import EnsembleCheckpointer
-from deepdrivewe.parsl import ComputeConfigTypes
 from deepdrivewe.recyclers import LowRecycler
 from deepdrivewe.resamplers import HuberKimResampler
 from deepdrivewe.simulation.openmm import ContactMapRMSDReporter
@@ -38,17 +37,26 @@ from deepdrivewe.workflows.westpa import WestpaAgent
 
 
 class SimulationConfig(BaseModel):
-    """Configuration for the OpenMM simulation."""
+    """Configuration for the OpenMM simulation.
+
+    Notes
+    -----
+    File paths on this model are *not* resolved at load time. The
+    simulation agent runs on the Globus Compute endpoint host, so paths
+    must remain interpretable on that host. Use absolute paths (that
+    exist on the endpoint) or paths that resolve correctly relative to
+    the endpoint worker's cwd.
+    """
 
     openmm_config: OpenMMConfig = Field(
         description='The configuration for the OpenMM simulation.',
     )
     top_file: Path | None = Field(
         default=None,
-        description='The topology file for the simulation.',
+        description='Topology file path (on the simulation host).',
     )
     reference_file: Path = Field(
-        description='The reference PDB file for RMSD analysis.',
+        description='Reference PDB path (on the simulation host).',
     )
     cutoff_angstrom: float = Field(
         default=8.0,
@@ -62,12 +70,6 @@ class SimulationConfig(BaseModel):
         default=['CA'],
         description='OpenMM atom selection strings.',
     )
-
-    @field_validator('top_file', 'reference_file')
-    @classmethod
-    def resolve_file(cls, value: Path | None) -> Path | None:
-        """Validate and resolve the file path."""
-        return validate_and_resolve_file(value)
 
 
 class InferenceConfig(BaseModel):
@@ -84,6 +86,37 @@ class InferenceConfig(BaseModel):
     min_allowed_weight: float = Field(
         default=10e-40,
         description='Minimum allowed simulation weight.',
+    )
+
+
+class GlobusComputeConfig(BaseModel):
+    """Configuration for the remote Globus Compute endpoints.
+
+    Two endpoints are used:
+
+    - ``simulation_endpoint_id`` runs OpenMM simulation agents and
+      should be a GPU-equipped endpoint (e.g. LocalProvider with
+      ``available_accelerators`` set on the engine).
+    - ``inference_endpoint_id`` runs the WESTPA/Huber-Kim resampling
+      agent and only needs a CPU worker. It can point at the same
+      physical host as the simulation endpoint (recommended, so
+      checkpoint/output paths resolve consistently) or at a different
+      host that shares the ``output_dir`` filesystem.
+
+    Both endpoints must be pre-configured and running on their hosts.
+    See the README for deployment instructions.
+    """
+
+    simulation_endpoint_id: str = Field(
+        description='Endpoint UUID for OpenMM simulation agents (GPU).',
+    )
+    inference_endpoint_id: str | None = Field(
+        default=None,
+        description=(
+            'Endpoint UUID for the WESTPA agent (CPU). If omitted, '
+            'the agent runs locally on the orchestrator via a '
+            'ThreadPoolExecutor.'
+        ),
     )
 
 
@@ -115,10 +148,23 @@ class RMSDBasisStateInitializer(BaseModel):
 
 
 class ExperimentSettings(BaseModel):
-    """Full experiment configuration (YAML)."""
+    """Full experiment configuration (YAML).
+
+    Path handling
+    -------------
+    - ``output_dir`` is resolved locally on the **orchestrator** host
+      (checkpoints, ``params.yaml``, ``runtime.log``).
+    - ``sim_output_dir`` is passed through verbatim to the simulation
+      agent and is resolved on the **simulation** host (HPC). For
+      ``--exchange globus`` use an absolute path that exists on the
+      endpoint; for ``--exchange local`` a relative path works.
+    """
 
     output_dir: Path = Field(
-        description='Directory to store results.',
+        description='Directory for orchestrator outputs (local).',
+    )
+    sim_output_dir: Path = Field(
+        description='Directory for simulation outputs (sim host).',
     )
     num_iterations: int = Field(
         ge=1,
@@ -139,14 +185,14 @@ class ExperimentSettings(BaseModel):
     inference_config: InferenceConfig = Field(
         description='Inference/resampling configuration.',
     )
-    compute_config: ComputeConfigTypes = Field(
-        description='Compute configuration for running simulations.',
+    globus_compute: GlobusComputeConfig = Field(
+        description='Globus Compute endpoint + exchange settings.',
     )
 
     @field_validator('output_dir')
     @classmethod
     def mkdir_validator(cls, value: Path) -> Path:
-        """Resolve and create the output directory."""
+        """Resolve and create the orchestrator output directory."""
         value = value.resolve()
         value.mkdir(parents=True, exist_ok=True)
         return value

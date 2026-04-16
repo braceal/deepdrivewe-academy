@@ -1,59 +1,77 @@
-# OpenMM NTL9 Huber-Kim Weighted Ensemble Configuration GPU workstation setup.
-# The input files are relative to the example directory.
+# OpenMM NTL9 Huber-Kim Multisite Configuration
+#
+# Orchestrator (this process) runs locally; OpenMMSimAgents are
+# dispatched to a pre-configured Globus Compute endpoint on the HPC
+# host via the Academy Exchange Cloud.
+#
+# PATHS
+# - output_dir is resolved on the orchestrator host.
+# - sim_output_dir is passed verbatim to the simulation agent and is
+#   resolved on the endpoint host. For --exchange globus use an
+#   absolute HPC path. For --exchange local a relative path works.
+# - basis_state_dir and reference_file paths must be readable on BOTH
+#   hosts at the same resolved path (e.g. pre-stage this example dir
+#   on the HPC host, or use absolute paths that exist on both sides).
 
-# The output directory for the runs
+# --- Orchestrator-side -----------------------------------------------
+
+# Where checkpoints, params.yaml, and runtime.log are written.
 output_dir: results/
 
-# The number of iterations to run the ensemble for
+# Number of WE iterations.
 num_iterations: 100
 
-# Basis states: directory containing starting structures in subdirectories
-# e.g., basis_states/00/, basis_states/01/, ...
+# Basis states — read on the orchestrator at init time to seed
+# progress coordinates, AND opened on the sim host as iter-0 restart
+# files. Pre-stage the inputs/ directory at a path that resolves to
+# the same files on both sides.
 basis_states:
   basis_state_dir: inputs/
-  # The file extension for the basis state files
   basis_state_ext: .pdb
-  # The number of basis states to use
   initial_ensemble_members: 4
 
-# Compute initial progress coordinates via RMSD to the reference structure
+# Initial pcoord computation (runs on the orchestrator).
 basis_state_initializer:
-  # The path to the reference PDB file
   reference_file: common_files/reference.pdb
-  # MDAnalysis selection string for calculating RMSD (C-alpha atoms)
   mda_selection: protein and name CA
 
-# Target state: folded structure (RMSD < 1.0 Angstrom)
+# Target state: folded structure (RMSD < 1.0 A).
 target_states:
   - label: folded
     pcoord: [1.0]
 
-# The configuration for the simulation
-simulation_config:
-  # The OpenMM configuration
-  openmm_config:
-    # The number of nanoseconds to run each simulation for (10 ps)
-    simulation_length_ns: 0.01
-    # How often to report frames in picoseconds
-    report_interval_ps: 2.0
-    # The time step to use in picoseconds
-    dt_ps: 0.002
-    # The temperature to run the simulation at
-    temperature_kelvin: 300.0
-    # The solvent type
-    solvent_type: implicit
-
-  # The path to the reference PDB file
-  reference_file: common_files/reference.pdb
-
-# Huber-Kim resampling parameters
+# Huber-Kim resampling parameters.
 inference_config:
-  # The number of simulations to maintain per bin
   sims_per_bin: 4
 
-# GPU workstation compute resources (Parsl)
-compute_config:
-  name: workstation
-  # Number of GPUs available
-  # The numbers below are analogous to setting CUDA_VISIBLE_DEVICES=0,1,2,3
-  available_accelerators: ["0", "1", "2", "3"]
+# --- Simulation-side -------------------------------------------------
+
+# Where per-iteration simulation dirs (trajectories, restart files)
+# are written. Resolved on the endpoint host — absolute for globus.
+sim_output_dir: results/simulation/
+
+# OpenMM configuration. reference_file is opened on the endpoint host.
+simulation_config:
+  openmm_config:
+    simulation_length_ns: 0.01
+    report_interval_ps: 2.0
+    dt_ps: 0.002
+    temperature_kelvin: 300.0
+    solvent_type: implicit
+  reference_file: common_files/reference.pdb
+
+# --- Remote compute --------------------------------------------------
+
+# Pre-configured Globus Compute endpoints. Replace each UUID with the
+# one printed by `globus-compute-endpoint start <name>`.
+# - simulation_endpoint_id (required): GPU endpoint that runs
+#   OpenMMSimAgents.
+# - inference_endpoint_id (optional): CPU endpoint that runs the
+#   WESTPA agent. If omitted (or left null), the agent runs locally
+#   on the orchestrator via a ThreadPoolExecutor.
+# Both endpoints may point at the same physical host (recommended,
+# so the checkpoint/output directory is on a shared filesystem), or
+# at different hosts that share `output_dir`.
+globus_compute:
+  simulation_endpoint_id: a1dfe336-e69d-4d15-a41f-4553fbd9aa05
+  # inference_endpoint_id: 00000000-0000-0000-0000-000000000000

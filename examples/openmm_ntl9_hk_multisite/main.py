@@ -1,18 +1,18 @@
-r"""OpenMM NTL9 Huber-Kim WESTPA example using Academy agents.
+r"""OpenMM NTL9 Huber-Kim multisite example using Academy agents.
 
-Adapted from examples/openmm_ntl9_hk to use the Academy
-multi-agent framework instead of Colmena/Parsl.
+Runs the WE orchestrator locally and dispatches OpenMM simulation
+agents to a remote HPC site via a pre-configured Globus Compute
+endpoint, communicating through the Academy Exchange Cloud.
 
 Usage
 -----
 ::
 
-    python -m examples.openmm_ntl9_hk_academy.main -c config.yaml
+    # Two-site run (orchestrator local, sims on HPC endpoint)
+    python main.py -c config.yaml --exchange globus
 
-Or with the Academy Exchange Cloud::
-
-    python -m examples.openmm_ntl9_hk_academy.main \
-        -c config.yaml --exchange globus
+    # Single-host smoke test (sims in a local thread pool)
+    python main.py -c config.yaml --exchange local
 """
 
 from __future__ import annotations
@@ -20,17 +20,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
-import signal
 from argparse import ArgumentParser
+from collections.abc import MutableMapping
+from concurrent.futures import Executor
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from academy.exchange.cloud.client import HttpExchangeFactory
 from academy.exchange.local import LocalExchangeFactory
 from academy.logging import init_logging
 from academy.manager import Manager
-from parsl.concurrent import ParslPoolExecutor
 from workflow import ExperimentSettings
 from workflow import HuberKimWestpaAgent
 from workflow import OpenMMSimAgent
@@ -58,34 +56,64 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--exchange',
         choices=['local', 'globus'],
-        default='local',
+        default='globus',
+        help='"globus" dispatches sims to the Globus Compute endpoint '
+        'via the Academy Exchange Cloud; "local" runs everything '
+        'in-process for smoke testing.',
     )
     return parser.parse_args()
 
 
-def _export_pythonpath() -> None:
-    """Add this directory to PYTHONPATH for Parsl workers."""
-    example_dir = str(Path(__file__).resolve().parent)
-    pythonpath = os.environ.get('PYTHONPATH', '')
-    if example_dir not in pythonpath:
-        os.environ['PYTHONPATH'] = example_dir + os.pathsep + pythonpath
+def create_executors(
+    exchange: str,
+    simulation_endpoint_id: str,
+    inference_endpoint_id: str | None,
+) -> MutableMapping[str, Executor | None]:
+    """Return the ``{executor_name: Executor}`` map for the Manager.
+
+    ``local`` uses ThreadPools on the orchestrator host for smoke
+    tests. ``globus`` dispatches each agent type to its own
+    pre-configured Globus Compute endpoint via
+    ``globus_compute_sdk.Executor``:
+
+    - ``sim_executor`` -> the simulation endpoint (OpenMMSimAgent).
+    - ``westpa_executor`` -> the inference endpoint
+      (HuberKimWestpaAgent). If ``inference_endpoint_id`` is ``None``
+      the WESTPA agent runs locally on the orchestrator via a
+      ThreadPoolExecutor instead.
+    """
+    if exchange == 'local':
+        return {
+            'sim_executor': ThreadPoolExecutor(max_workers=4),
+            'westpa_executor': ThreadPoolExecutor(max_workers=1),
+        }
+    # Imported lazily so the local smoke test does not require
+    # globus-compute-sdk to be installed.
+    from globus_compute_sdk import Executor as GCExecutor
+
+    if inference_endpoint_id is None:
+        logging.warning(
+            'No inference endpoint ID provided; WESTPA agent will run locally',
+        )
+        westpa_executor = ThreadPoolExecutor(max_workers=1)
+    else:
+        westpa_executor = GCExecutor(endpoint_id=inference_endpoint_id)
+
+    return {
+        'sim_executor': GCExecutor(endpoint_id=simulation_endpoint_id),
+        'westpa_executor': westpa_executor,
+    }
 
 
 async def main() -> None:
-    """Run the OpenMM WESTPA workflow."""
-    _export_pythonpath()
+    """Run the OpenMM WESTPA workflow across two sites."""
     args = parse_args()
     cfg = ExperimentSettings.from_yaml(args.config)
     cfg.dump_yaml(cfg.output_dir / 'params.yaml')
 
     init_logging('INFO', logfile=cfg.output_dir / 'runtime.log')
 
-    # Create Parsl configuration from compute config
-    parsl_config = cfg.compute_config.get_parsl_config(
-        cfg.output_dir / 'run-info',
-    )
-
-    # Initialize or resume ensemble
+    # Initialize or resume the ensemble on the orchestrator host.
     checkpointer = EnsembleCheckpointer(output_dir=cfg.output_dir)
     checkpoint = checkpointer.latest_checkpoint()
 
@@ -102,28 +130,18 @@ async def main() -> None:
     logging.info(f'Basis states: {ensemble.basis_states}')
     logging.info(f'Target states: {ensemble.target_states}')
 
-    # Create the Parsl executor outside the Manager context so we
-    # can guarantee cleanup even if the process is interrupted.
-    gpu_executor = ParslPoolExecutor(parsl_config)
-
-    # Handle `kill <pid>` (SIGTERM). Parsl workers survive the main
-    # process dying, and normal interpreter shutdown hangs after
-    # atexit cleans up the DFK. Using os._exit() after shutdown
-    # sidesteps the hang while still tearing down workers cleanly.
-    def _handle_sigterm(*_: object) -> None:
-        gpu_executor.shutdown(wait=False)
-        os._exit(0)
-
-    signal.signal(signal.SIGTERM, _handle_sigterm)
+    # Create the compute executors for each agent type
+    executors = create_executors(
+        args.exchange,
+        cfg.globus_compute.simulation_endpoint_id,
+        cfg.globus_compute.inference_endpoint_id,
+    )
 
     try:
         async with await Manager.from_exchange_factory(
             factory=create_exchange_factory(args.exchange),
-            executors={
-                'gpu': gpu_executor,
-                'cpu': ThreadPoolExecutor(max_workers=1),
-            },
-            default_executor='gpu',
+            executors=executors,
+            default_executor='sim_executor',
         ) as manager:
             await run_westpa_workflow(
                 manager=manager,
@@ -134,17 +152,19 @@ async def main() -> None:
                 checkpointer=checkpointer,
                 sim_agent_kwargs={
                     'sim_config': cfg.simulation_config,
-                    'output_dir': cfg.output_dir / 'simulation',
+                    'output_dir': cfg.sim_output_dir,
                 },
                 westpa_agent_kwargs={
                     'inference_config': cfg.inference_config,
                 },
-                sim_executor='gpu',
-                westpa_executor='cpu',
+                sim_executor='sim_executor',
+                westpa_executor='westpa_executor',
                 logfile=cfg.output_dir / 'runtime.log',
             )
     finally:
-        gpu_executor.shutdown(wait=False)
+        for ex in executors.values():
+            if ex is not None:
+                ex.shutdown(wait=False)
 
 
 if __name__ == '__main__':
