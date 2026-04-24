@@ -85,4 +85,4 @@ simulation_config:
 # at different hosts that share `output_dir`.
 globus_compute:
   simulation_endpoint_id: a1dfe336-e69d-4d15-a41f-4553fbd9aa05
-  # inference_endpoint_id: null
+  inference_endpoint_id: b30e78ad-6c0c-4f49-9aff-c0ca13cfd720
