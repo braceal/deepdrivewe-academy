@@ -52,10 +52,6 @@ inference_config:
 
 # --- Simulation-side -------------------------------------------------
 
-# Where per-iteration simulation dirs (trajectories, restart files)
-# are written. Resolved on the endpoint host — absolute for globus.
-sim_output_dir: results/simulation/
-
 # OpenMM configuration. reference_file is opened on the endpoint host.
 # base_dir is the absolute path to this example directory on the sim
 # host. All relative paths (reference_file, top_file, restart files

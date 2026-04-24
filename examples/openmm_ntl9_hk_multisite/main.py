@@ -159,10 +159,11 @@ async def main() -> None:
                 checkpointer=None,
                 sim_agent_kwargs={
                     'sim_config': cfg.simulation_config,
-                    'output_dir': cfg.sim_output_dir,
+                    'output_dir': cfg.output_dir / 'simulation',
                 },
                 westpa_agent_kwargs={
                     'inference_config': cfg.inference_config,
+                    'output_dir': cfg.output_dir,
                 },
                 sim_executor='sim_executor',
                 westpa_executor='westpa_executor',

@@ -102,13 +102,6 @@ class InferenceConfig(BaseModel):
             'local / single-site runs).'
         ),
     )
-    output_dir: Path = Field(
-        default=Path('results/'),
-        description=(
-            'Directory for checkpoints and logs on the inference '
-            'host. Resolved after chdir to base_dir.'
-        ),
-    )
     sims_per_bin: int = Field(
         default=5,
         description='Number of simulations per bin.',
@@ -165,13 +158,6 @@ class RMSDBasisStateInitializer(BaseModel):
         description='MDAnalysis selection for atoms.',
     )
 
-    @field_validator('reference_file')
-    @classmethod
-    def resolve_file(cls, value: Path | None) -> Path | None:
-        """Validate and resolve the file path."""
-        return value
-        # return validate_and_resolve_file(value)
-
     def __call__(self, basis_file: str) -> list[float]:
         """Compute RMSD between basis and reference."""
         basis = MDAnalysis.Universe(basis_file)
@@ -183,23 +169,10 @@ class RMSDBasisStateInitializer(BaseModel):
 
 
 class ExperimentSettings(BaseModel):
-    """Full experiment configuration (YAML).
-
-    Path handling
-    -------------
-    - ``output_dir`` is resolved locally on the **orchestrator** host
-      (checkpoints, ``params.yaml``, ``runtime.log``).
-    - ``sim_output_dir`` is passed through verbatim to the simulation
-      agent and is resolved on the **simulation** host (HPC). For
-      ``--exchange globus`` use an absolute path that exists on the
-      endpoint; for ``--exchange local`` a relative path works.
-    """
+    """Full experiment configuration (YAML)."""
 
     output_dir: Path = Field(
-        description='Directory for orchestrator outputs (local).',
-    )
-    sim_output_dir: Path = Field(
-        description='Directory for simulation outputs (sim host).',
+        description='Directory for outputs.',
     )
     num_iterations: int = Field(
         ge=1,
@@ -227,8 +200,7 @@ class ExperimentSettings(BaseModel):
     @field_validator('output_dir')
     @classmethod
     def mkdir_validator(cls, value: Path) -> Path:
-        """Resolve and create the orchestrator output directory."""
-        # value = value.resolve()
+        """Create the orchestrator host output directory."""
         value.mkdir(parents=True, exist_ok=True)
         return value
 
@@ -265,6 +237,10 @@ class OpenMMSimAgent(SimulationAgent):
                 'Changed simulation working directory to %s',
                 self.sim_config.base_dir,
             )
+
+        # Create the output directory for simulation results.
+        # The output_dir is relative to the sim host cwd (changed above)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run_simulation(self, metadata: SimMetadata) -> SimResult:
         """Run an OpenMM simulation."""
@@ -319,6 +295,7 @@ class HuberKimWestpaAgent(WestpaAgent):
         simulation_handles: list[Handle[SimulationAgent]],
         max_iterations: int,
         ensemble: WeightedEnsemble,
+        output_dir: Path,
         checkpointer: EnsembleCheckpointer | None = None,
         inference_config: InferenceConfig | None = None,
         logfile: Path | None = None,
@@ -331,6 +308,7 @@ class HuberKimWestpaAgent(WestpaAgent):
             logfile=logfile,
         )
         self.inference_config = inference_config or InferenceConfig()
+        self.output_dir = output_dir
 
     async def agent_on_startup(self) -> None:
         """Set the working directory and initialize the checkpointer.
@@ -354,11 +332,12 @@ class HuberKimWestpaAgent(WestpaAgent):
                 self.inference_config.base_dir,
             )
 
+        # The output_dir is relative to the inference host cwd (changed above)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         # Create the checkpointer on the inference host where the
         # output_dir path resolves correctly.
-        output_dir = self.inference_config.output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpointer = EnsembleCheckpointer(output_dir=output_dir)
+        self.checkpointer = EnsembleCheckpointer(output_dir=self.output_dir)
 
         # Resume from the latest checkpoint if one exists on this
         # host.
