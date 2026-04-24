@@ -47,7 +47,8 @@ class SimulationConfig(BaseModel):
     resolution.
     """
 
-    base_dir: Path = Field(
+    base_dir: Path | None = Field(
+        default=None,
         description=(
             'Absolute path to the example directory on the sim host. '
             'The agent chdirs here on startup so relative paths '
