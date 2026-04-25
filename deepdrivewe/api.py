@@ -318,12 +318,12 @@ class BasisStates(BaseModel):
     @field_validator('basis_state_dir')
     @classmethod
     def validate_basis_state_dir(cls, value: Path) -> Path:
-        """Validate and resolve the basis state directory."""
+        """Check that the basis state directory exists and is a directory."""
         if not value.is_dir():
             raise NotADirectoryError(
                 f'The basis state directory {value} is not a directory.',
             )
-        return value.resolve()
+        return value
 
     @property
     def unique_basis_states(self) -> list[SimMetadata]:

@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/ramanathanlab/deepdrivewe-academy?include_prereleases&sort=semver)](https://github.com/ramanathanlab/deepdrivewe-academy/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/ramanathanlab/deepdrivewe-academy/main.svg)](https://results.pre-commit.ci/latest/github/ramanathanlab/deepdrivewe-academy/main)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 Implementation of [DeepDriveWE](https://pubs.acs.org/doi/full/10.1021/acs.jctc.4c01136) using [Academy](https://docs.academy-agents.org/stable/).
