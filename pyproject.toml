@@ -182,7 +182,7 @@ required-imports = ["from __future__ import annotations"]
 "*/test_*.py" = ["D10"]
 
 [tool.ruff.lint.pylint]
-max-args = 7
+max-args = 8
 
 [tool.ruff.pydocstyle]
 convention = "numpy"
