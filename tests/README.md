@@ -5,15 +5,24 @@
 The suite covers the **math and policy core** of the weighted-ensemble
 engine — the code paths where a silent bug would corrupt a production run:
 
-| Module                  | Tests                           |
-|-------------------------|---------------------------------|
-| `deepdrivewe.api`       | `tests/unit/test_api.py`        |
-| `deepdrivewe.binners`   | `tests/unit/test_binners.py`    |
-| `deepdrivewe.resamplers`| `tests/unit/test_resamplers.py` |
-| `deepdrivewe.recyclers` | `tests/unit/test_recyclers.py`  |
-| `deepdrivewe.utils`     | `tests/unit/test_utils.py`      |
-| `deepdrivewe.checkpoint`| `tests/integration/test_checkpoint.py` |
-| `deepdrivewe.io`        | `tests/integration/test_io.py`  |
+| Module                       | Tests                                   |
+|------------------------------|-----------------------------------------|
+| `deepdrivewe.api`            | `tests/unit/test_api.py`                |
+| `deepdrivewe.binners`        | `tests/unit/test_binners.py`            |
+| `deepdrivewe.resamplers`     | `tests/unit/test_resamplers.py`         |
+| `deepdrivewe.recyclers`      | `tests/unit/test_recyclers.py`          |
+| `deepdrivewe.utils`          | `tests/unit/test_utils.py`              |
+| `deepdrivewe.checkpoint`     | `tests/integration/test_checkpoint.py`  |
+| `deepdrivewe.io`             | `tests/integration/test_io.py`          |
+| `deepdrivewe.workflows.westpa` | `tests/integration/test_workflow.py`  |
+
+The workflow integration tests stand up a real Academy `Manager` with
+`LocalExchangeFactory` + `ThreadPoolExecutor`, launch mock
+`SimulationAgent` / `WestpaAgent` subclasses (modeled on
+`examples/minimal_westpa/main.py`), and run the full iteration loop
+end-to-end. The mock simulation agent materializes a real restart file
+on disk per call so subsequent iterations' `wait_for_file` resolves
+immediately rather than burning the 8-retry / 1s-base-delay backoff.
 
 ## Not covered (by design)
 
@@ -22,7 +31,6 @@ through the `examples/` workflows rather than pytest:
 
 - `deepdrivewe.simulation.*` — needs OpenMM, AmberTools, real MD inputs
 - `deepdrivewe.ai.*` — needs torch + mdlearn training loops
-- `deepdrivewe.workflows.*` — Academy orchestration glue
 - `deepdrivewe.parsl` — parsl config wrapper
 
 They are `omit`-ed from coverage in `pyproject.toml`. When CI gains those
