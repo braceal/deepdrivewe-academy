@@ -90,11 +90,10 @@ source = ["deepdrivewe"]
 omit = [
     "examples/*",
     # Heavy-infrastructure modules not covered by the unit suite. These
-    # require OpenMM/Amber/parsl and are exercised via example runs, not
+    # require OpenMM/Amber/torch and are exercised via example runs, not
     # pytest. Revisit once CI has those deps.
     "deepdrivewe/simulation/*",
     "deepdrivewe/ai/*",
-    "deepdrivewe/workflows/*",
     "deepdrivewe/parsl.py",
 ]
 
