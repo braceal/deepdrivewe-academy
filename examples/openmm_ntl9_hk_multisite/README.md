@@ -1,54 +1,57 @@
 ## Multi-site OpenMM NTL9 Folding with Huber-Kim Weighted Ensemble
 
-A production-ready example that runs the DeepDriveWE **orchestrator**
-on one host (your laptop, a login node, or a cloud VM) and dispatches
-**OpenMM simulation agents** and the **WESTPA resampling agent** to a
-remote HPC site via two pre-configured
-[Globus Compute](https://www.globus.org/compute) endpoints — one GPU
-endpoint for simulations and one CPU endpoint for inference. The
-orchestrator and the endpoints communicate through the
+This example supports three deployment modes:
+
+1. **Single host** (`--exchange local`) — orchestrator, simulations,
+   and inference all run on the same machine in thread pools. Good
+   for smoke testing without any Globus infrastructure.
+2. **Two sites** — orchestrator runs locally; simulations and
+   inference run on a single remote HPC host via Globus Compute
+   (set `inference_endpoint_id` to `null` to run the WESTPA agent
+   locally on the orchestrator instead).
+3. **Three sites** — orchestrator, GPU simulation endpoint, and CPU
+   inference endpoint each run on separate machines.
+
+The orchestrator and remote endpoints communicate through the
 [Academy Exchange Cloud](https://docs.academy-agents.org/stable/)
-using Globus Auth — no VPN or shared filesystem required between the
-orchestrator and the HPC site.
+via [Globus Compute](https://www.globus.org/compute) — no VPN or
+shared filesystem required between sites.
 
 ### Architecture
 
 ```mermaid
-graph LR
-    subgraph "Site A - orchestrator (laptop / login / VM)"
+graph TD
+    subgraph "Site A · orchestrator"
         M["main.py"]
     end
 
-    subgraph "Academy Exchange Cloud"
-        EX[("exchange.academy-agents.org")]
-    end
+    M <-->|Exchange Cloud| EX
 
-    subgraph "Site B - HPC host (shared FS)"
-        SE[Simulation endpoint - GPU]
-        IE[Inference endpoint - CPU]
+    EX[("academy-agents.org")]
+
+
+    subgraph "Site B · GPU simulation endpoint"
         SA["OpenMMSimAgent(s)"]
-        WA[HuberKimWestpaAgent]
-        SE --> SA
-        IE --> WA
     end
 
-    M <-->|HttpExchangeFactory + Globus Auth| EX
-    EX <-->|HttpExchangeFactory + Globus Auth| SE
-    EX <-->|HttpExchangeFactory + Globus Auth| IE
-    WA -.->|SimMetadata| SA
-    SA -.->|SimResult| WA
+    subgraph "Site C · CPU inference endpoint"
+        WA[HuberKimWestpaAgent]
+    end
+
+    WA -->|SimMetadata| EX
+    EX -->|SimMetadata| SA
+    SA -->|SimResult| EX
+    EX -->|SimResult| WA
 ```
 
-The orchestrator owns the ensemble bootstrap (basis-state pcoord
-init, `params.yaml`, initial checkpoint path) and drives the Manager.
-`OpenMMSimAgent`s run on the **simulation endpoint** (GPU-pinned),
-while the `HuberKimWestpaAgent` runs on the **inference endpoint**
-(CPU-only). Both endpoints typically live on the same HPC host so
-they share `output_dir` for checkpoints; if they live on different
-hosts, `output_dir` must be on a shared filesystem reachable from
-both. Pcoords and contact maps travel over the exchange as
-serialized `SimResult` payloads — the orchestrator never opens
-simulation files directly.
+The orchestrator (Site A) seeds the ensemble, writes `params.yaml`
+and `runtime.log`, and drives the Academy Manager. `OpenMMSimAgent`s
+run on a **GPU simulation endpoint** (Site B), while the
+`HuberKimWestpaAgent` runs on a **CPU inference endpoint** (Site C).
+Each agent chdirs to its `base_dir` on startup so relative paths
+(`output_dir`, reference files, checkpoints) resolve correctly on
+that host. All data (`SimMetadata`, `SimResult`) travels through the
+Academy Exchange Cloud — the orchestrator never opens simulation files directly.
 
 > **Single-endpoint mode.** `inference_endpoint_id` is optional. If
 > you omit it, the `HuberKimWestpaAgent` runs locally on the
@@ -62,10 +65,16 @@ simulation files directly.
 
 Tested on **Python 3.11**.
 
-**Both hosts:**
+> **Important:** All three sites (orchestrator, simulation endpoint,
+> inference endpoint) must run the **same Python version** (e.g.
+> Python 3.11). Globus Compute uses `dill` to serialize tasks and
+> results across sites; mismatched Python versions cause
+> deserialization failures.
+
+**All hosts:**
 - Python 3.11 with this repository installed: `pip install -e '.[dev]'`
 - `pip install globus-compute-sdk globus-compute-endpoint`
-- A Globus account and completed Globus Auth flow
+- A Globus account and completed Globus Auth flow or [Globus Compute client credentials](https://globus-compute.readthedocs.io/en/2.3.1/sdk.html#client-credentials-with-clients).
 
 **HPC endpoint host (site B):**
 - OpenMM + MDAnalysis + mdtraj. Conda or micromamba recommended:
@@ -84,7 +93,7 @@ Tested on **Python 3.11**.
   micromamba env; they just differ in their `engine` shape.
 
   ```bash
-  # Simulation endpoint: GPU, one worker per H100.
+  # Simulation endpoint: GPU, one worker per GPU.
   globus-compute-endpoint configure deepdrivewe-sim
   # Edit ~/.globus_compute/deepdrivewe-sim/config.yaml (see below).
   globus-compute-endpoint start deepdrivewe-sim
@@ -95,22 +104,26 @@ Tested on **Python 3.11**.
   # Edit ~/.globus_compute/deepdrivewe-inf/config.yaml (see below).
   globus-compute-endpoint start deepdrivewe-inf
   # -> UUID goes into globus_compute.inference_endpoint_id
+
+  # List all endpoints and their UUIDs:
+  globus-compute-endpoint list
   ```
 
   **Simulation endpoint (`deepdrivewe-sim`).** On a single NVIDIA
-  workstation with 8 H100s, a `LocalProvider` engine that pins one
+  workstation with 8 GPUs, a `LocalProvider` engine that pins one
   worker per GPU via `available_accelerators` works well. Replace
   the generated `~/.globus_compute/deepdrivewe-sim/config.yaml`
-  with:
+  with the template below, updating the `TODO` values for your
+  machine and environment:
 
   ```yaml
-  display_name: DeepDriveWE workstation (8x H100)
+  display_name: DeepDriveWE GPU workstation
 
   engine:
     type: GlobusComputeEngine
+
+    # TODO: Set these values according to your GPU count.
     max_workers_per_node: 8
-    # Integer form of available_accelerators assigns one worker per
-    # GPU by setting CUDA_VISIBLE_DEVICES=<worker_index> on launch.
     available_accelerators: 8
 
     provider:
@@ -128,42 +141,40 @@ Tested on **Python 3.11**.
       # points at the micromamba *data root* (where envs/ lives).
       # These are the defaults from `micromamba shell init`; adjust
       # if your install uses different locations.
+      #
+      # TODO: Update the EXAMPLE_DIR path for your HPC host.
+      # TODO: Put in your specific logic to activate your virtual environment
       worker_init: |
-        # Point this at wherever this example is cloned on the host.
-        EXAMPLE_DIR="$HOME/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite"
+        # The example directory on the HPC host
+        EXAMPLE_DIR="/nfs/ml_lab/projects/ml_lab/abrace/projects/ddwe/src/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite"
 
+        # Activate the venv/micromamba/conda env
         export MAMBA_EXE="$HOME/bin/micromamba"
         export MAMBA_ROOT_PREFIX="$HOME/micromamba"
         eval "$("$MAMBA_EXE" shell hook --shell bash --root-prefix "$MAMBA_ROOT_PREFIX")"
-        micromamba activate deepdrivewe
+        micromamba activate deepdrivewe-academy
 
         export PYTHONPATH="$EXAMPLE_DIR:$PYTHONPATH"
-
-        # Fresh per-worker run dir. mktemp -d atomically creates a
-        # uniquely-named directory so concurrent workers never collide.
-        # Dirs look like results/run-20260415-aB3xK9pQ/ (date + random).
-        mkdir -p "$EXAMPLE_DIR/results"
-        RUN_DIR=$(mktemp -d "$EXAMPLE_DIR/results/run-$(date +%Y%m%d)-XXXXXXXX")
-        cd "$RUN_DIR"
   ```
 
   Notes:
   - `available_accelerators: 8` is the canonical way to pin one
     worker per GPU on a multi-GPU host — Globus Compute sets
     `CUDA_VISIBLE_DEVICES` per worker for you, so OpenMM picks up
-    exactly one H100.
+    exactly one GPU.
   - `init_blocks: 1` / `max_blocks: 1` keep a single Parsl block
     (one HTEX manager for the whole workstation).
   - The env activated by `worker_init` must contain OpenMM 8.1, this
     repository (`pip install -e .`), and `globus-compute-sdk`.
   - If you prefer conda, swap the micromamba block for
     `source "$HOME/miniconda3/etc/profile.d/conda.sh" &&
-    conda activate deepdrivewe`.
+    conda activate deepdrivewe-academy`.
 
   **Inference endpoint (`deepdrivewe-inf`).** The WESTPA agent is
   single-threaded and CPU-bound (binning, resampling, checkpointing),
   so one worker is enough. Replace
-  `~/.globus_compute/deepdrivewe-inf/config.yaml` with:
+  `~/.globus_compute/deepdrivewe-inf/config.yaml` with the template
+  below, updating the `TODO` values for your machine and environment:
 
   ```yaml
   display_name: DeepDriveWE inference (CPU)
@@ -180,20 +191,16 @@ Tested on **Python 3.11**.
       max_blocks: 1
 
       # Same env + PYTHONPATH setup as the simulation endpoint so the
-      # worker can import workflow.py and access the shared output_dir.
+      # worker can import workflow.py.
+      #
+      # TODO: Update the EXAMPLE_DIR path for your host.
+      # TODO: Put in your specific logic to activate your virtual environment.
       worker_init: |
-        EXAMPLE_DIR="$HOME/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite"
+        EXAMPLE_DIR="/rbstor/abrace/projects/ddwe/src/deepdrivewe-academy/examples/openmm_ntl9_hk_multisite"
 
-        export MAMBA_EXE="$HOME/bin/micromamba"
-        export MAMBA_ROOT_PREFIX="$HOME/micromamba"
-        eval "$("$MAMBA_EXE" shell hook --shell bash --root-prefix "$MAMBA_ROOT_PREFIX")"
-        micromamba activate deepdrivewe
-
+        . "/rbstor/abrace/anaconda3/etc/profile.d/conda.sh"
+        conda activate deepdrivewe-academy
         export PYTHONPATH="$EXAMPLE_DIR:$PYTHONPATH"
-
-        mkdir -p "$EXAMPLE_DIR/results"
-        RUN_DIR=$(mktemp -d "$EXAMPLE_DIR/results/run-$(date +%Y%m%d)-XXXXXXXX")
-        cd "$RUN_DIR"
   ```
 
 ### Quick Start
@@ -209,7 +216,8 @@ Tested on **Python 3.11**.
      UUID. Optional: omit (or leave commented) to run the WESTPA
      agent locally on the orchestrator instead of on a second
      endpoint.
-   - `sim_output_dir` — an absolute HPC scratch path for trajectories.
+   - `simulation_config.base_dir` / `inference_config.base_dir` —
+     absolute paths to this example directory on each endpoint host.
 4. Run the orchestrator locally:
 
    ```bash
@@ -227,8 +235,7 @@ endpoint, run in local mode. Simulation agents run in a local
 python main.py -c config.yaml --exchange local
 ```
 
-Local mode does not require `globus-compute-sdk`. Adjust
-`sim_output_dir` to a local path (e.g. `results/simulation/`) first.
+Local mode does not require `globus-compute-sdk`.
 
 ### Path Handling
 
@@ -238,9 +245,10 @@ host resolves which path:
 
 | Path | Resolved on | Notes |
 |---|---|---|
-| `output_dir` | orchestrator | Auto-resolved + created at load time. Holds checkpoints, `params.yaml`, `runtime.log`. |
-| `sim_output_dir` | simulation host | Passed verbatim to the sim agent. Use an **absolute** HPC path for `--exchange globus`; relative is fine for `--exchange local`. |
-| `basis_states.basis_state_dir` | both | Opened on the orchestrator for pcoord init AND on the sim host for iter-0 restart files. Must resolve to the same files on both sides (pre-stage identical layouts, or use an absolute path that exists on both). |
+| `output_dir` | all three hosts | Created on the orchestrator at load time (`params.yaml`, `runtime.log`). Passed to each agent and resolved relative to its `base_dir` after chdir for checkpoints and simulation output. |
+| `simulation_config.base_dir` | simulation host | Absolute path to this example directory. The sim agent chdirs here on startup so relative paths resolve correctly. |
+| `inference_config.base_dir` | inference host | Absolute path to this example directory. The WESTPA agent chdirs here on startup. Set to `null` for local / single-site runs. |
+| `basis_states.basis_state_dir` | all hosts | Opened on the orchestrator for pcoord init AND on the sim host for iter-0 restart files. Must resolve to the same files on all hosts. |
 | `basis_state_initializer.reference_file` | orchestrator | Used once at init to compute initial pcoords. |
 | `simulation_config.reference_file` | simulation host | Opened by the sim agent. Not validated at load time — an invalid path will fail during the first iteration. |
 
@@ -275,8 +283,9 @@ openmm_ntl9_hk_multisite/
 | Parameter | Default | Description |
 |---|---|---|
 | `num_iterations` | 100 | Number of WE iterations |
-| `output_dir` | `results/` | Orchestrator outputs (checkpoints, logs) |
-| `sim_output_dir` | `results/simulation/` | Simulation outputs (HPC scratch) |
+| `output_dir` | `results/` | Outputs directory (resolved on each host relative to its `base_dir`) |
+| `simulation_config.base_dir` | — | Absolute path to example dir on the simulation host |
+| `inference_config.base_dir` | `null` | Absolute path to example dir on the inference host |
 | `simulation_config.openmm_config.simulation_length_ns` | 0.01 | MD segment length per iteration (ns) |
 | `simulation_config.openmm_config.temperature_kelvin` | 300.0 | Simulation temperature |
 | `simulation_config.openmm_config.solvent_type` | implicit | Solvent model |
@@ -294,15 +303,13 @@ the Globus Compute endpoints
 (`globus-compute-endpoint stop deepdrivewe-sim` and
 `globus-compute-endpoint stop deepdrivewe-inf`).
 
-### Extending This Example
 
-**Multiple simulation sites** — register several `GCExecutor`s under
-distinct executor names (e.g. `{'gpu-alcf': ..., 'gpu-olcf': ...}`)
-and launch agents with `sim_executor='gpu-alcf'` / `'gpu-olcf'`.
+---
 
-**Resuming** — rerun with the same `output_dir`; the latest
-checkpoint is loaded automatically.
-
-**Custom resampling / progress coordinates** — see the single-site
-[openmm_ntl9_hk](../openmm_ntl9_hk/) example for subclassing
-`SimulationAgent` / `WestpaAgent`.
+> **Known limitation:** checkpoint resume in multi-site workflows is
+> not yet fully supported. On resume the orchestrator dispatches fresh
+> initial simulations from the seed ensemble, which may not match the
+> checkpoint's `next_sims`. Full multi-site resume requires the
+> inference agent to re-dispatch the correct walkers from the
+> checkpoint state. Single-site (`--exchange local`) resume works as
+> expected.
