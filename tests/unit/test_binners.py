@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Callable
+from itertools import product
 
 import numpy as np
 import pytest
@@ -173,6 +174,55 @@ class TestMultiRectilinearBinner:
             assert (
                 assigner.assign_bins(coords) == [0, 0, 5, 10, 10, 15, 7, 8]
             ).all()
+
+    def test2dAssign_v2(self) -> None:  # noqa:N802
+        boundaries = [(0, 1, 2, 3), (0, 1, 2)]
+        coords = np.array(
+            [
+                (0.5, 0.5),
+                (0.5, 1.5),
+                (1.5, 0.5),
+                (1.5, 1.5),
+                (2.5, 0.5),
+                (2.5, 1.5),
+                (3.5, 1.5),
+            ],
+        )
+
+        assigner = MultiRectilinearBinner(
+            boundaries,  # type: ignore[arg-type]
+            bin_target_counts=3,
+            target_state_inds=[None],  # type: ignore[list-item]
+        )
+
+        with pytest.warns(UserWarning):
+            # first 6 points are in bins [0, 5].
+            # The last point located outside bounds but clipped to bin 5
+            assert (
+                assigner.assign_bins(coords) == [0, 1, 2, 3, 4, 5, 5]
+            ).all()
+
+    def test3dAssign(self) -> None:  # noqa:N802
+        boundaries = [(0, 1, 2), (0, 1, 2, 3, 4, 5), (0, 1, 2)]
+        coords = list(
+            product([0.5, 1.5], [0.5, 1.5, 2.5, 3.5, 4.5], [0.5, 1.5]),
+        )  # One point per bin, in row-major order
+        coords += [
+            (2.5, 4.5, 1.5),
+            (1.5, 5.5, 1.5),
+        ]  # Two points that are located outside the bin boundaries
+        coords = np.asarray(coords)
+
+        assigner = MultiRectilinearBinner(
+            boundaries,  # type: ignore[arg-type]
+            bin_target_counts=3,
+            target_state_inds=[None],  # type: ignore[list-item]
+        )
+
+        with pytest.warns(UserWarning):
+            # first 20 points are in bins [0, 19].
+            # Last two located outside the bounds but will be clipped to bin 19
+            assert (assigner.assign_bins(coords) == [*range(20), 19, 19]).all()
 
 
 @pytest.mark.unit
